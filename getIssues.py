@@ -1,0 +1,250 @@
+access_oauth_token = "token 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" #TODO: delete the value before commiting the code
+access_oauth_token = 'token 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'
+reposSourceDir= "ApacheRepos"
+out = 'apacheIssues/bug-reports/'
+orgz = 'apache/'
+
+# base_path = '/Users/pouya/Desktop/Jupyter Notebook/'
+# #out_commits_dir = base_path + "se4a1_class_group_project/commits/" + repo_name
+# out_commits_dir=base_path+repo_name+ '/commits'
+# #proj_path = base_path + "systems_being_studied/" + repo_name
+# proj_path = base_path+ repo_name+'/commits'
+
+
+
+import os
+import json
+import requests
+import pprint
+import time
+
+def get_git_closed_bug_issues(repo, media_type = "application/vnd.github+json"):
+    issue_numbers_list = []
+    current_page=1
+    pagination_end = False
+    #iteration throught the pagination
+    while not pagination_end:
+        issues_json = requests.get(
+             "https://api.github.com/repos/"+orgz+repo+"/issues?state=closed&labels=bug&page="+str(current_page),
+            headers={
+                'Accept': media_type,
+                'Authorization': access_oauth_token
+            }
+        )
+
+        print(issues_json.status_code)
+
+        while issues_json.status_code != 200:
+            print('I am sleeping zzz...', time.time())
+            time.sleep(1800) # 15 min
+
+            issues_json = requests.get(
+             "https://api.github.com/repos/"+orgz+repo+"/issues?state=closed&labels=bug&page="+str(current_page),
+            headers={
+                'Accept': media_type,
+                'Authorization': access_oauth_token
+                }
+            )
+
+        issues_json = issues_json.json()
+
+
+        # print(issues_json)
+        if len(issues_json) > 0:
+            for issue in issues_json:
+                issue_numbers_list.append(issue["number"])
+                #return issue_numbers_list
+
+            current_page = current_page + 1
+        else:
+            pagination_end = True
+            
+    return issue_numbers_list
+
+
+
+
+
+
+def git_request_br_json(issue_n, repo, media_type = 'application/vnd.github.v3+json'):
+    retrieved_json = requests.get(
+        'https://api.github.com/repos/'+orgz+repo+'/issues/'+str(issue_n),
+        headers={
+            'Accept': media_type,
+            'Authorization': access_oauth_token
+        }
+    ).json()
+
+    # print(retrieved_json)
+    
+    if 'comments_url' not in retrieved_json:
+        return
+    
+    comment_url = retrieved_json['comments_url']
+    retrieved_comments = requests.get(
+        comment_url,
+        headers={
+            'Accept': media_type,
+            'Authorization': access_oauth_token
+        }
+    )
+
+    print(retrieved_comments.status_code)
+
+    while retrieved_comments.status_code != 200:
+        print('I am sleeping zzz...', time.time())
+        time.sleep(1800) # 15 min
+
+        retrieved_comments = requests.get(
+            comment_url,
+            headers={
+                'Accept': media_type,
+                'Authorization': access_oauth_token
+            }
+        )
+
+    retrieved_comments = retrieved_comments.json()
+
+    retrieved_json['comments_content'] = retrieved_comments
+    return retrieved_json
+
+# output_folder = out + repo_name+ '/'
+def dict_to_json_file(file, dic, folder):
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+    with open(os.path.join(folder, file+'.json'), 'w') as fp:
+        json.dump(dic, fp, sort_keys=True, indent=4)
+    fp.close()
+
+
+
+
+import re
+import glob
+from collections import defaultdict
+from urllib.parse import quote
+from datetime import datetime
+
+bug_reports_commits = defaultdict(dict)
+cont = 0
+
+def json_file_to_dict(file,output_folder):
+    data = {}
+    
+    with open(os.path.join('/home/shabnam/pouya/'+output_folder, file+'.json'), 'r') as fp:
+        data = json.load(fp)
+    fp.close()
+    return data
+
+def get_bug_report_commit(bug, proj_path):
+    os.chdir(proj_path)
+    log_grep_command = "git log --grep=\"#"+ str(bug)+"[^0-9]\" --grep=\"#"+ str(bug)+"$\" --pretty=format:\"%H\" >> commit_output"
+    os.system(log_grep_command)
+    lines = []
+    with open("commit_output", 'r') as fp:
+        lines =fp.readlines()
+        fp.close()
+    os.system("rm commit_output")
+    if (lines):
+        commit_hash = lines[0].strip()
+        return(commit_hash)
+    return ""
+
+def get_commit_files(commit):
+    get_files_command = "git diff --name-only "+ commit+ " " + commit+  "~1 >> files_output"
+    os.system(get_files_command)
+    files = []
+    with open("files_output", 'r') as fp:
+        files =fp.readlines()
+        fp.close()
+    os.system("rm files_output")
+    files = [f.strip() for f in files]
+    return files
+
+
+
+repos = os.listdir(reposSourceDir)
+checkedRepos = os.listdir('/home/shabnam/pouya/mainDatasets/apacheBugIssues')
+# repos = ['accumulo']
+
+basePath = '/home/shabnam/pouya/'
+apacheDir = 'mainDatasets/autogeneratedDataframes'
+listOfSeenRepos = set()
+for repoDF in os.listdir(basePath+apacheDir):
+    listOfSeenRepos.add(repoDF.split('_')[0])
+
+for repo in list(listOfSeenRepos):
+    if repo in checkedRepos:
+        print(f'repo {repo} checked before.')
+        continue 
+
+
+    print(f'-------- start repo: {repo} ----------')
+    # #1
+    issue_numbers_list = get_git_closed_bug_issues(repo)
+    print(f'{repo}->'+"\nNumber of issues: " + str(len(issue_numbers_list)))
+    
+
+    # #2
+    out_folder = out+repo+'/'
+    for issue_number in issue_numbers_list:
+        try:
+            retrieved_json = git_request_br_json(issue_number, repo)
+        except ConnectionError:
+            print('ConnectionError', repo, issue_number)
+            break
+
+        if not retrieved_json:
+            print('Json not retrieved, something might be wrong')
+            continue
+
+        dict_to_json_file(repo + '-' + str(issue_number), retrieved_json, out_folder)
+
+        print (f'repo: {repo} Extraction completed')
+
+    #3
+    
+    proj_path = f'/home/shabnam/pouya/ApacheRepos/{repo}'
+    folder = proj_path
+    if not os.path.exists(folder):
+        os.makedirs(folder)
+    
+
+    for bug in issue_numbers_list:
+        commit = get_bug_report_commit(bug, proj_path)
+        proj = repo
+        try:
+            bug_report = json_file_to_dict(proj + "-" + str(bug),out_folder)
+        except:
+            continue
+        if not bug_report:
+            continue
+        creation_date = datetime.strptime(bug_report["created_at"], "%Y-%m-%dT%H:%M:%SZ")
+        closing_date = datetime.strptime(bug_report["closed_at"], "%Y-%m-%dT%H:%M:%SZ")
+        duration = closing_date - creation_date
+        duration_in_s = duration.total_seconds()
+        hours_to_resolution = duration_in_s/3600
+        if (commit != ""):
+            content = {
+                "commit": commit,
+                "modified_files": get_commit_files(commit),
+                "number_of_comments": bug_report["comments"],
+                "created_at": bug_report["created_at"],
+                "closed_at": bug_report["closed_at"],
+                "hours_to_resolution": "{:.2f}".format(hours_to_resolution)           
+            }
+            bug_reports_commits[bug] = content
+            cont = cont + 1
+
+
+    if bug_reports_commits:
+        print(os.getcwd())
+        os.chdir('/home/shabnam/pouya')
+        print(os.getcwd())
+        out_commits_dir = f'bugIssuesReport/{repo}'
+        dict_to_json_file("bug_reports_with_commits", bug_reports_commits, out_commits_dir)
+
+    print("Extraction complete")
+    print("Number obtained: " + str(cont))
+
+print('finish')
